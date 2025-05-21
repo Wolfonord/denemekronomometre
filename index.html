@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Etüt Kronometresi</title>
+  <style>
+    body {
+      margin: 0;
+      background: black;
+      color: white;
+      font-family: Arial, sans-serif;
+      text-align: center;
+    }
+
+    #stars {
+      position: fixed;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      z-index: -1;
+    }
+
+    .star {
+      position: absolute;
+      border-radius: 50%;
+      background: white;
+      opacity: var(--brightness);
+      animation: twinkle 2s infinite alternate;
+    }
+
+    .small { width: 1px; height: 1px; }
+    .medium { width: 2px; height: 2px; }
+    .large { width: 3px; height: 3px; }
+    .xlarge { width: 4px; height: 4px; }
+
+    @keyframes twinkle {
+      from { opacity: var(--brightness); }
+      to { opacity: calc(var(--brightness) * 0.3); }
+    }
+
+    #sure, #etutSure {
+      font-size: 2em;
+      margin: 20px 0;
+    }
+
+    button {
+      margin: 10px;
+      padding: 10px 20px;
+      font-size: 1em;
+      border: none;
+      border-radius: 10px;
+      background: #444;
+      color: white;
+      cursor: pointer;
+    }
+
+    #logDetay {
+      display: none;
+      margin: 20px auto;
+      max-width: 500px;
+      text-align: left;
+    }
+
+    #sureEklePanel {
+      display: none;
+      margin: 10px auto;
+    }
+
+    input[type=number] {
+      width: 50px;
+      padding: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="stars"></div>
+  <h1>Etüt Kronometresi</h1>
+  <div id="sure">00:00:00</div>
+  <div id="etutSure">Etüt süresi: 00:00:00</div>
+  <button id="baslatDurdurBtn" onclick="toggleBaslatDurdur()">Başlat</button>
+  <button id="etutBtn" onclick="toggleEtut()">Etüte Başla</button>
+  <button onclick="sifirla()">Sıfırla</button>
+  <button onclick="sureEklePanelGoster()">Süre Ekle</button>
+  <button onclick="toggleLog()">Geçmişi Göster/Gizle</button>
+
+  <div id="sureEklePanel">
+    <h3>Toplam Süre Ekle</h3>
+    Saat: <input id="saatInput" type="number" min="0" /> 
+    Dakika: <input id="dakikaInput" type="number" min="0" /> 
+    Saniye: <input id="saniyeInput" type="number" min="0" />
+    <br><br>
+    <h3>Etüt Süresi Ekle</h3>
+    Saat: <input id="etutSaatInput" type="number" min="0" />
+    Dakika: <input id="etutDakikaInput" type="number" min="0" />
+    Saniye: <input id="etutSaniyeInput" type="number" min="0" />
+    <br><br>
+    <button onclick="sureEkle()">Ekle</button>
+  </div>
+
+  <div id="logDetay"></div>
+
+  <script>
+    let wakeLock = null;
+
+    async function requestWakeLock() {
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => {
+          console.log('Wake Lock serbest bırakıldı');
+        });
+      } catch (err) {
+        console.error(`${err.name}, ${err.message}`);
+      }
+    }
+
+    function releaseWakeLock() {
+      if (wakeLock !== null) {
+        wakeLock.release();
+        wakeLock = null;
+      }
+    }
+
+    function createStars() {
+      const starsContainer = document.getElementById('stars');
+      const starsCount = 400;
+      for (let i = 0; i < starsCount; i++) {
+        const star = document.createElement('div');
+        star.classList.add('star');
+        const sizes = ['small', 'medium', 'large', 'xlarge'];
+        const size = sizes[Math.floor(Math.random() * sizes.length)];
+        star.classList.add(size);
+        star.style.left = `${Math.random() * 100}%`;
+        star.style.top = `${Math.random() * 100}%`;
+        star.style.animationDelay = `${Math.random() * 5}s`;
+        star.style.setProperty('--brightness', Math.random() * 0.7 + 0.3);
+        starsContainer.appendChild(star);
+      }
+    }
+    window.onload = () => {
+      createStars();
+      verileriYukle();
+      guncelleEkran();
+    };
+
+    let saniye = 0, dakika = 0, saat = 0;
+    let etutSaniye = 0, etutDakika = 0, etutSaat = 0;
+    let calisiyor = false, interval, etutAktif = false, etutNumara = 1;
+    let etutBaslangic = null;
+
+    const sureEl = document.getElementById("sure");
+    const etutSureEl = document.getElementById("etutSure");
+    const logDetay = document.getElementById("logDetay");
+    const etutBtn = document.getElementById("etutBtn");
+    const baslatDurdurBtn = document.getElementById("baslatDurdurBtn");
+
+    document.addEventListener('keydown', function(event) {
+      if (event.code === 'Space') {
+        event.preventDefault();
+        toggleBaslatDurdur();
+      }
+      if (event.code === 'Enter') {
+        event.preventDefault();
+        toggleEtut();
+      }
+    });
+
+    function toggleBaslatDurdur() {
+      if (calisiyor) {
+        durdur();
+        baslatDurdurBtn.textContent = "Başlat";
+      } else {
+        baslat();
+        baslatDurdurBtn.textContent = "Durdur";
+      }
+    }
+
+    function sureEklePanelGoster() {
+      const panel = document.getElementById("sureEklePanel");
+      panel.style.display = panel.style.display === "none" ? "block" : "none";
+    }
+
+    function sureEkle() {
+      const s = parseInt(document.getElementById("saatInput").value) || 0;
+      const d = parseInt(document.getElementById("dakikaInput").value) || 0;
+      const sn = parseInt(document.getElementById("saniyeInput").value) || 0;
+      const es = parseInt(document.getElementById("etutSaatInput").value) || 0;
+      const ed = parseInt(document.getElementById("etutDakikaInput").value) || 0;
+      const esn = parseInt(document.getElementById("etutSaniyeInput").value) || 0;
+
+      let toplamSure = saat * 3600 + dakika * 60 + saniye + s * 3600 + d * 60 + sn;
+      saat = Math.floor(toplamSure / 3600);
+      dakika = Math.floor((toplamSure % 3600) / 60);
+      saniye = toplamSure % 60;
+
+      let toplamEtut = etutSaat * 3600 + etutDakika * 60 + etutSaniye + es * 3600 + ed * 60 + esn;
+      etutSaat = Math.floor(toplamEtut / 3600);
+      etutDakika = Math.floor((toplamEtut % 3600) / 60);
+      etutSaniye = toplamEtut % 60;
+
+      guncelleEkran();
+      verileriKaydet();
+      sureEklePanelGoster();
+    }
+
+    function formatla(s) { return s < 10 ? "0" + s : s; }
+    function zamanStr(sn, d, s) { return formatla(s) + ":" + formatla(d) + ":" + formatla(sn); }
+
+    function guncelleEkran() {
+      sureEl.textContent = zamanStr(saniye, dakika, saat);
+      etutSureEl.textContent = "Etüt süresi: " + zamanStr(etutSaniye, etutDakika, etutSaat);
+    }
+
+    function baslat() {
+      if (!calisiyor) {
+        calisiyor = true;
+        if ('wakeLock' in navigator) requestWakeLock();
+        interval = setInterval(() => {
+          saniye++;
+          if (saniye === 60) { saniye = 0; dakika++; }
+          if (dakika === 60) { dakika = 0; saat++; }
+          if (etutAktif) {
+            etutSaniye++;
+            if (etutSaniye === 60) { etutSaniye = 0; etutDakika++; }
+            if (etutDakika === 60) { etutDakika = 0; etutSaat++; }
+          }
+          guncelleEkran();
+          verileriKaydet();
+        }, 1000);
+      }
+    }
+
+    function durdur() {
+      if (calisiyor) {
+        calisiyor = false;
+        clearInterval(interval);
+        if ('wakeLock' in navigator) releaseWakeLock();
+      }
+    }
+
+    function sifirla() {
+      durdur();
+      saniye = dakika = saat = 0;
+      guncelleEkran();
+      baslatDurdurBtn.textContent = "Başlat";
+      verileriKaydet();
+    }
+
+    function toggleEtut() {
+      if (!etutAktif) {
+        etutAktif = true;
+        etutBtn.textContent = "Etütü Bitir";
+        etutBaslangic = new Date();
+        etutSaniye = etutDakika = etutSaat = 0;
+        baslat();
+        baslatDurdurBtn.textContent = "Durdur";
+      } else {
+        etutAktif = false;
+        etutBtn.textContent = "Etüte Başla";
+        const bitis = new Date();
+        const sure = zamanStr(etutSaniye, etutDakika, etutSaat);
+        const basStr = etutBaslangic.toLocaleTimeString("tr-TR", { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const bitStr = bitis.toLocaleTimeString("tr-TR", { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const div = document.createElement("div");
+        div.innerHTML = `<strong>${etutNumara}. Etüt</strong>: ${basStr} - ${bitStr} (Süre: ${sure})`;
+        logDetay.appendChild(div);
+        etutNumara++;
+        verileriKaydet();
+      }
+    }
+
+    function toggleLog() {
+      logDetay.style.display = logDetay.style.display === "none" ? "block" : "none";
+    }
+
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible' && calisiyor) {
+        await requestWakeLock();
+      }
+    });
+
+    function verileriKaydet() {
+      const veriler = {
+        saniye, dakika, saat,
+        etutSaniye, etutDakika, etutSaat,
+        etutNumara,
+        etutGecmisi: logDetay.innerHTML
+      };
+      localStorage.setItem("kronometreVerisi", JSON.stringify(veriler));
+    }
+
+    function verileriYukle() {
+      const kayit = localStorage.getItem("kronometreVerisi");
+      if (kayit) {
+        const veriler = JSON.parse(kayit);
+        saniye = veriler.saniye || 0;
+        dakika = veriler.dakika || 0;
+        saat = veriler.saat || 0;
+        etutSaniye = veriler.etutSaniye || 0;
+        etutDakika = veriler.etutDakika || 0;
+        etutSaat = veriler.etutSaat || 0;
+        etutNumara = veriler.etutNumara || 1;
+        logDetay.innerHTML = veriler.etutGecmisi || "";
+      }
+    }
+  </script>
+</body>
+</html>
